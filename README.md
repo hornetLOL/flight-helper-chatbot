@@ -1,2 +1,95 @@
-# flight-helper-chatbot
-This chatbot is being developed as a learning project. The bot does not use personal data or the company's private API. The bot works in telegram and may be redesigned into other messengers or integrated into a web application in the future.
+# ✈️ Aviation Assistant Bot
+
+> **Учебный проект** — чат-бот для помощи с авиаперелётами. Не является официальным продуктом Аэрофлота или любой другой авиакомпании.
+
+[![Python 3.14](https://img.shields.io/badge/Python-3.14-blue)](https://www.python.org/downloads/release/python-3140/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-000000)](https://docs.aiogram.dev/)
+
+## ⚠️ Disclaimer
+
+Этот проект создан **исключительно в образовательных целях** для изучения:
+- разработки чат-ботов на Telegram API
+- интеграции с авиационными API
+- дообучения языковых моделей под доменную область
+
+Проект **не использует** закрытые API Аэрофлота и **не хранит** персональные данные пассажиров. Все данные — синтетические или из открытых источников.
+
+## 🎯 Цели обучения
+
+| Этап | Цель | Статус |
+|------|------|--------|
+| 1 | Базовый эхо-бот в Telegram (aiogram 3.x) | 🟡 В процессе |
+| 2 | Интеграция с AviationStack / OpenSky API | ⬜ Не начат |
+| 3 | Интент-классификация через правила | ⬜ Не начат |
+| 4 | Интеграция LLM (OpenRouter / YandexGPT) | ⬜ Не начат |
+| 5 | Дообучение Qwen2-0.5B на авиадомене | ⬜ Не начат |
+| 6 | Деплой на Railway.app | ⬜ Не начат |
+
+## 🛠 Технологический стек
+
+| Компонент | Технология | Зачем |
+|-----------|------------|-------|
+| Бот-фреймворк | aiogram 3.12 | Асинхронный, современный, активно поддерживается |
+| Конфигурация | python-dotenv | Безопасное управление секретами |
+| Внешние API | AviationStack, OpenSky Network | Открытые данные о рейсах (бесплатные тарифы) |
+| LLM (РФ) | OpenRouter, Together.ai, YandexGPT | Альтернативы OpenAI, доступные из России |
+| Кэширование | Redis | Снижение нагрузки на внешние API |
+| Тестирование | pytest + pytest-asyncio | Покрытие сценариев диалога |
+
+## ▶️ Запуск проекта
+
+### Предварительные требования
+- Python 3.14.x
+- Git
+- [Telegram аккаунт](https://telegram.org/) (для тестирования бота)
+
+### Пошаговая инструкция
+
+```powershell
+# 1. Клонировать репозиторий
+git clone https://github.com/ваш-логин/aviation-assistant-bot.git
+cd aviation-assistant-bot
+
+# 2. Создать виртуальное окружение
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 3. Установить зависимости
+pip install -r requirements.txt
+
+# 4. Настроить переменные окружения
+Copy-Item .env.example .env
+# Откройте .env в редакторе и вставьте реальные ключи
+
+# 5. Запустить бота
+python -m src.bot.main
+```
+
+## 🔒 Безопасность
+
+| Риск | Мера защиты |
+|------|-------------|
+| Утечка токена бота | `.env` исключён через `.gitignore`; используем `.env.example` как шаблон |
+| Утечка весов моделей | Все форматы весов (`.bin`, `.safetensors`) в `.gitignore` |
+| Rate limits API | Кэширование через Redis + экспоненциальный бэк-офф |
+| Персональные данные | Никогда не храним PII; только синтетические данные для обучения |
+
+## 📚 Обучение и документация
+
+- [`docs/LEARNING_LOG.md`](docs/LEARNING_LOG.md) — дневник прогресса, ошибок и решений
+
+## 🌍 Для разработчиков из России
+
+Проект использует сервисы, доступные без VPN:
+- **OpenRouter** — агрегатор 150+ моделей (Mistral, Llama 3, Qwen)
+- **Together.ai** — дешёвый инференс для открытых моделей
+- **YandexGPT** — официальный API от Яндекса
+
+> ❌ Избегаем: OpenAI API (требует карты не РФ), Anthropic (ограниченный доступ)
+
+## 📄 Лицензия
+
+MIT License — см. [LICENSE](LICENSE)
+
+---
