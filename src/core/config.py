@@ -12,7 +12,8 @@ class Settings:
     """Настройки приложения"""
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
     DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
-
+    OPENSKY_CLIENT_ID: str = os.getenv("OPENSKY_CLIENT_ID", "")
+    OPENSKY_CLIENT_SECRET: str = os.getenv("OPENSKY_CLIENT_SECRET", "")
     def validate(self) -> bool:
         """Проверка обязательных параметров"""
         if not self.BOT_TOKEN:

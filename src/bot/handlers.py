@@ -1,73 +1,70 @@
 """
-Обработчики команд и сообщений для flight-helper-chatbot.
+Обработчики команд и сообщений для flight-helper-chatbot (Этап 3).
 
-Архитектурный принцип:
-- Каждая команда/сценарий — отдельная функция
-- Обработчики не содержат бизнес-логику (только оркестрация)
-- Импортируют сервисы из src.core для сложной логики
+Добавлено:
+- Интеграция с OpenSky Network API (доступен из РФ)
+- Обработка номера рейса → callsign
+- Резервная заглушка при недоступности API
+- Форматированный вывод данных о рейсе
 """
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
+from src.api_clients.opensky_client import opensky_client
+import logging
 
+logger = logging.getLogger(__name__)
 router = Router(name="main_handlers")
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    """Обработчик команды /start"""
     await message.answer(
         "✈️ <b>Flight Helper Chatbot</b>\n\n"
-        "Привет! Я — учебный ассистент для помощи с авиаперелётами.\n"
-        "Пока я нахожусь на этапе обучения и умею не всё.\n"
+        "Привет! Я помогу узнать информацию о рейсах.\n"
         "\n"
         "📚 Доступные команды:\n"
         "/help — справка по возможностям\n"
         "/about — информация о проекте\n"
-        "/flight — заглушка для будущего функционала (статус рейса)\n"
+        "/flight SU1234 — статус рейса (тестовый режим)\n"
         "\n"
-        "⚠️ <i>Это учебный проект. Не является продуктом Аэрофлота.</i>",
+        "⚠️ <i>Учебный проект. Данные из открытых источников.</i>",
         parse_mode="HTML"
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    """Обработчик команды /help"""
     await message.answer(
-        "ℹ️ <b>Справка по возможностям</b>\n\n"
-        "<b>Текущий этап разработки:</b> 2/6\n\n"
-        "<b>Что умею сейчас:</b>\n"
-        "• Отвечать на команды /start, /help, /about\n"
-        "• Режим эхо для текстовых сообщений\n"
-        "• Заглушка под запрос статуса рейса (/flight)\n\n"
-        "<b>Что будет добавлено позже:</b>\n"
-        "• Интеграция с авиационными API (статус рейсов)\n"
-        "• Интент-классификация (понимание запросов)\n"
-        "• Интеграция с ИИ-моделями для генерации ответов\n\n"
-        "<b>Как пользоваться:</b>\n"
-        "Просто отправьте команду или текстовое сообщение.\n"
-        "Пример: <code>/flight SU1234</code>",
+        "ℹ️ <b>Справка</b>\n\n"
+        "<b>Текущий этап:</b> 3/6 — интеграция с авиационными данными\n\n"
+        "<b>Как проверить рейс:</b>\n"
+        "<code>/flight SU1234</code>\n\n"
+        "<b>Поддерживаемые авиакомпании (учебно):</b>\n"
+        "• SU — Аэрофлот (пример: SU1234)\n"
+        "• S7 — S7 Airlines (пример: S7123)\n"
+        "• DP — Победа (пример: DP456)\n\n"
+        "<b>Важно для РФ:</b>\n"
+        "• Данные берутся из открытого источника OpenSky Network\n"
+        "• Если рейс не в эфире — покажу заглушку\n"
+        "• Точность данных зависит от доступности API",
         parse_mode="HTML"
     )
 
 
 @router.message(Command("about"))
 async def cmd_about(message: Message) -> None:
-    """Обработчик команды /about"""
     await message.answer(
-        "🎓 <b>О проекте Flight Helper Chatbot</b>\n\n"
-        "<b>Цель:</b> Обучение разработке чат-ботов и работе с ИИ.\n\n"
+        "🎓 <b>О проекте</b>\n\n"
+        "<b>Цель:</b> Обучение интеграции с внешними API и работе с данными.\n\n"
         "<b>Технологии:</b>\n"
         "• Python 3.14.0\n"
-        "• aiogram 3.12 (Telegram Bot API)\n"
-        "• Планируется: AviationStack API, OpenRouter, Qwen2\n\n"
+        "• aiogram 3.12\n"
+        "• OpenSky Network API (доступен из РФ)\n\n"
         "<b>Статус:</b>\n"
-        "Учебный проект. Не связан с Аэрофлотом или другими авиакомпаниями.\n\n"
+        "Учебный проект. Не связан с авиакомпаниями.\n\n"
         "<b>Исходный код:</b>\n"
-        "https://github.com/hornetLOL/flight-helper-chatbot\n\n"
-        "<b>Лицензия:</b>\n"
-        "MIT License",
+        "https://github.com/ваш-логин/flight-helper-chatbot",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -76,57 +73,84 @@ async def cmd_about(message: Message) -> None:
 @router.message(Command("flight"))
 async def cmd_flight(message: Message) -> None:
     """
-    Заглушка под будущую команду статуса рейса.
+    Обработчик команды /flight с интеграцией OpenSky API.
 
-    На этом этапе показываем пользователю, что функционал в разработке,
-    и объясняем формат будущего запроса.
+    Логика для РФ:
+    1. Преобразуем номер рейса в callsign
+    2. Запрашиваем данные у OpenSky
+    3. Если API недоступен — показываем заглушку
+    4. Форматируем ответ для пользователя
     """
-    # Извлекаем аргументы команды (номер рейса)
     args = message.text.split()[1:] if len(message.text.split()) > 1 else []
 
     if not args:
         await message.answer(
-            "🛫 <b>Статус рейса (заглушка)</b>\n\n"
-            "Этот функционал находится в разработке.\n"
-            "Позже вы сможете проверить статус рейса по номеру.\n\n"
-            "<b>Формат использования:</b>\n"
+            "🛫 <b>Статус рейса</b>\n\n"
+            "Укажите номер рейса после команды:\n"
             "<code>/flight SU1234</code>\n\n"
-            "<b>Поддерживаемые авиакомпании:</b>\n"
-            "• SU — Аэрофлот\n"
-            "• другие — через открытые авиационные API",
+            "Поддерживаемые форматы:\n"
+            "• SU1234 (Аэрофлот)\n"
+            "• S7123 (S7 Airlines)\n"
+            "• DP456 (Победа)",
             parse_mode="HTML"
         )
         return
 
-    flight_number = " ".join(args).upper()
-    await message.answer(
-        f"🚧 <b>Режим разработки</b>\n\n"
-        f"Запрос статуса рейса: <code>{flight_number}</code>\n\n"
-        "Функционал ещё не реализован.\n"
-        "Это заглушка для будущей интеграции с авиационными API.\n\n"
-        "Следите за прогрессом в репозитории:\n"
-        "https://github.com/hornetLOL/flight-helper-chatbot",
-        parse_mode="HTML"
-    )
+    flight_number = args[0].upper().strip()
+    callsign = opensky_client.flight_number_to_callsign(flight_number)
+
+    logger.info(f"Запрос статуса рейса: {flight_number} → callsign: {callsign}")
+
+    # Запрос к OpenSky API
+    flight_data = await opensky_client.get_flight_by_callsign(callsign)
+
+    if flight_data:
+        # Формируем красивый ответ с данными
+        status_emoji = "🛬 На земле" if flight_data["on_ground"] else "✈️ В воздухе"
+        altitude_info = (
+            f"{flight_data['altitude_m']} м"
+            if not flight_data["on_ground"]
+            else "На земле"
+        )
+
+        response = (
+            f"✅ <b>Рейс {flight_number} найден!</b>\n\n"
+            f"<b>Callsign:</b> {flight_data['callsign']}\n"
+            f"<b>Статус:</b> {status_emoji}\n"
+            f"<b>Страна:</b> {flight_data['origin_country']}\n"
+            f"<b>Высота:</b> {altitude_info}\n"
+            f"<b>Скорость:</b> {flight_data['velocity_kmh']} км/ч\n"
+            f"<b>Направление:</b> {flight_data['heading']}°\n\n"
+            f"<i>Данные: OpenSky Network (реальное время)</i>"
+        )
+    else:
+        # Резервная заглушка (если рейс не в эфире или API недоступен)
+        response = (
+            f"⚠️ <b>Рейс {flight_number}</b>\n\n"
+            "Не удалось получить данные в реальном времени.\n\n"
+            "<b>Возможные причины:</b>\n"
+            "• Рейс не в эфире (ещё не вылетел/уже приземлился)\n"
+            "• Самолёт не оснащён ADS-B транспондером\n"
+            "• Временная недоступность OpenSky API\n\n"
+            "<b>Учебная информация:</b>\n"
+            "Номер рейса: {flight_number}\n"
+            "Callsign (для поиска): {callsign}\n\n"
+            "<i>Это учебный проект. Для точной информации обращайтесь к авиакомпании.</i>"
+        ).format(flight_number=flight_number, callsign=callsign)
+
+    await message.answer(response, parse_mode="HTML")
 
 
 @router.message()
 async def echo_handler(message: Message) -> None:
-    """
-    Эхо-обработчик для текстовых сообщений.
-
-    Игнорирует медиа (фото, видео, документы) — обрабатываем только текст.
-    """
+    """Эхо-обработчик для текстовых сообщений"""
     if not message.text:
         await message.answer(
-            "💬 Я пока умею обрабатывать только текстовые сообщения.\n"
-            "Попробуйте отправить команду:\n"
+            "💬 Я обрабатываю только текст.\n"
+            "Попробуйте команды:\n"
             "/help — справка\n"
-            "/about — о проекте"
+            "/flight SU1234 — статус рейса"
         )
         return
 
-    await message.answer(
-        f"🔁 <b>Эхо:</b>\n\n{message.text}",
-        parse_mode="HTML"
-    )
+    await message.answer(f"🔁 <b>Эхо:</b>\n\n{message.text}", parse_mode="HTML")
