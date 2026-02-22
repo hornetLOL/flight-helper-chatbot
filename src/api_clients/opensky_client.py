@@ -1,24 +1,22 @@
 """
 Клиент для работы с OpenSky Network API (OAuth2 аутентификация).
 
-Важно для аккаунтов после марта 2025:
-- Базовая аутентификация (логин/пароль) НЕ РАБОТАЕТ
-- Требуется OAuth2 Client Credentials Flow
-- Токен живёт 30 минут → нужна автоматическая перегенерация
-
-Документация: https://openskynetwork.github.io/opensky-api/rest.html
+Важно:
+- Параметр callsign НЕ поддерживается в запросе — фильтрация на стороне клиента
+- Правильные индексы данных согласно документации OpenSky
+- on_ground находится в индексе 8, а не 11
 """
 import httpx
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-class OpenSkyOAuth2Client:
-    """Клиент с поддержкой OAuth2 аутентификации"""
+class OpenSkyClient:
+    """Клиент для запросов к OpenSky Network API"""
 
     AUTH_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
     API_BASE_URL = "https://opensky-network.org/api"
@@ -30,25 +28,17 @@ class OpenSkyOAuth2Client:
         self._token_expires_at: float = 0.0
         self.timeout = 15.0
 
-        # Валидация конфигурации
         if not self.client_id or not self.client_secret:
             logger.warning(
                 "⚠️  OpenSky OAuth2 credentials отсутствуют в .env\n"
-                "   → Добавьте OPENSKY_CLIENT_ID и OPENSKY_CLIENT_SECRET в .env\n"
-                "   → Инструкция: Account Settings → API Clients → Create new API client"
+                "   → Добавьте OPENSKY_CLIENT_ID и OPENSKY_CLIENT_SECRET в .env"
             )
 
     async def _get_access_token(self) -> Optional[str]:
-        """
-        Получить или обновить access token через OAuth2.
-
-        Токен кэшируется на 25 минут (из 30) для избежания просрочки.
-        """
-        # Проверяем, не истёк ли текущий токен
+        """Получить или обновить access token через OAuth2"""
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
 
-        # Формируем запрос на получение токена
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
@@ -64,13 +54,12 @@ class OpenSkyOAuth2Client:
 
                 token_data = response.json()
                 access_token = token_data.get("access_token")
-                expires_in = token_data.get("expires_in", 1800)  # 30 минут по умолчанию
+                expires_in = token_data.get("expires_in", 1800)
 
                 if not access_token:
                     logger.error("❌ OpenSky: access_token отсутствует в ответе авторизации")
                     return None
 
-                # Кэшируем токен с запасом 5 минут
                 self._access_token = access_token
                 self._token_expires_at = time.time() + expires_in - 300
 
@@ -81,18 +70,9 @@ class OpenSkyOAuth2Client:
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
-            text = e.response.text[:300]
-            logger.error(f"❌ OpenSky OAuth2 ошибка {status}: {text}")
-
-            # Специальная диагностика для 401
+            logger.error(f"❌ OpenSky OAuth2 ошибка {status}")
             if status == 401:
-                logger.error(
-                    "   Возможные причины 401 при получении токена:\n"
-                    "   • Неправильный CLIENT_ID или CLIENT_SECRET в .env\n"
-                    "   • CLIENT_SECRET скопирован не полностью (показывается ОДИН РАЗ)\n"
-                    "   • Тип клиента должен быть 'confidential'\n"
-                    "   → Совет: пересоздайте API client и скопируйте секрет заново"
-                )
+                logger.error("   → Проверьте правильность OPENSKY_CLIENT_ID/SECRET в .env")
             return None
         except Exception as e:
             logger.error(f"❌ OpenSky OAuth2 исключение: {type(e).__name__}: {e}")
@@ -100,7 +80,10 @@ class OpenSkyOAuth2Client:
 
     async def get_flight_by_callsign(self, callsign: str) -> Optional[Dict[str, Any]]:
         """
-        Получить данные о рейсе по позывному через OAuth2.
+        Получить данные о рейсе по-позывному (callsign).
+
+        ВАЖНО: OpenSky не поддерживает фильтрацию по callsign в запросе.
+        Мы получаем все рейсы и фильтруем на стороне клиента.
         """
         if not self.client_id or not self.client_secret:
             logger.warning("⚠️  OpenSky: OAuth2 credentials не настроены — возвращаю заглушку")
@@ -108,73 +91,94 @@ class OpenSkyOAuth2Client:
 
         access_token = await self._get_access_token()
         if not access_token:
-            logger.error("❌ OpenSky: не удалось получить access token — запрос отменён")
+            logger.error("❌ OpenSky: не удалось получить access token")
             return None
 
         url = f"{self.API_BASE_URL}/states/all"
-        params = {"callsign": callsign.strip()}
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "User-Agent": "flight-helper-chatbot/1.0 (Python httpx)",
-            "Accept": "application/json",
+            "User-Agent": "flight-helper-chatbot/1.0",
         }
 
         if settings.DEBUG:
-            logger.debug(f"OpenSky OAuth2 request | callsign={callsign}")
+            logger.debug(f"OpenSky request | url={url} | searching for callsign={callsign}")
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(url, params=params, headers=headers)
+                response = await client.get(url, headers=headers)
 
                 # Автоматическое обновление токена при 401
                 if response.status_code == 401:
                     logger.warning("⚠️  OpenSky: токен просрочен — пробую обновить")
-                    self._access_token = None  # Сбрасываем кэш
+                    self._access_token = None
                     access_token = await self._get_access_token()
                     if not access_token:
                         return None
-                    # Повторяем запрос с новым токеном
                     headers["Authorization"] = f"Bearer {access_token}"
-                    response = await client.get(url, params=params, headers=headers)
+                    response = await client.get(url, headers=headers)
 
                 response.raise_for_status()
                 data = response.json()
                 states = data.get("states", [])
 
-                if not states:
-                    logger.info(f"Рейс {callsign} не найден в эфире (аутентификация успешна)")
-                    return None
+                if settings.DEBUG:
+                    logger.debug(f"OpenSky response | total_states={len(states)}")
 
-                return self._parse_state(states[0], callsign)
+                # 🔑 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: фильтрация на стороне клиента
+                for state in states:
+                    if not state or len(state) < 2:
+                        continue
+
+                    # Callsign находится в индексе 1
+                    state_callsign = state[1]
+                    if state_callsign and state_callsign.strip().upper() == callsign.upper().strip():
+                        logger.info(f"✅ Найден рейс {callsign} в эфире")
+                        return self._parse_state(state, callsign)
+
+                logger.info(f"⚠️  Рейс {callsign} не найден в эфире (получено {len(states)} рейсов)")
+                return None
 
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            text = e.response.text[:300]
-            logger.error(f"❌ OpenSky API ошибка {status}: {text}")
-            return None
-        except httpx.ConnectTimeout:
-            logger.warning("⚠️  Таймаут подключения к OpenSky API")
+            logger.error(f"❌ OpenSky API ошибка {e.response.status_code}")
             return None
         except Exception as e:
             logger.error(f"❌ Неизвестная ошибка OpenSky: {type(e).__name__}: {e}")
             return None
 
     def _parse_state(self, state: list, callsign: str) -> Dict[str, Any]:
-        """Парсинг сырых данных от OpenSky в читаемый формат"""
-        if len(state) < 19:
-            logger.warning(f"Неполные данные от OpenSky для {callsign}")
-            return self._generate_mock_flight(callsign)
+        """
+        Парсинг сырых данных от OpenSky в читаемый формат.
 
+        Согласно документации (индексы массива):
+        0: icao24
+        1: callsign
+        2: origin_country
+        3: time_position
+        4: last_contact
+        5: longitude
+        6: latitude
+        7: baro_altitude
+        8: on_ground ← КРИТИЧЕСКИ ВАЖНО!
+        9: velocity
+        10: true_track
+        11: vertical_rate
+        12: sensors
+        13: geo_altitude
+        14: squawk
+        15: spi
+        16: position_source
+        17: category
+        """
         return {
             "callsign": callsign.upper().strip(),
-            "icao24": state[0] if state[0] else "N/A",
-            "origin_country": state[5] if state[5] else "Неизвестно",
-            "on_ground": bool(state[11]) if state[11] is not None else False,
-            "altitude_m": int(state[10]) if state[10] else 0,
-            "velocity_kmh": int(state[13] * 3.6) if state[13] else 0,
-            "vertical_speed": int(state[16]) if state[16] is not None else 0,
-            "heading": int(state[18]) if state[18] is not None else 0,
-            "last_contact_sec": state[7] if state[7] else 0,
+            "icao24": state[0] if len(state) > 0 and state[0] else "N/A",
+            "origin_country": state[2] if len(state) > 2 and state[2] else "Неизвестно",
+            "on_ground": bool(state[8]) if len(state) > 8 and state[8] is not None else False,  # ← ИСПРАВЛЕНО: индекс 8
+            "altitude_m": int(state[7]) if len(state) > 7 and state[7] else 0,  # ← ИСПРАВЛЕНО: индекс 7
+            "velocity_kmh": int(state[9] * 3.6) if len(state) > 9 and state[9] else 0,  # ← ИСПРАВЛЕНО: индекс 9
+            "vertical_speed": int(state[11]) if len(state) > 11 and state[11] is not None else 0,
+            "heading": int(state[10]) if len(state) > 10 and state[10] is not None else 0,
+            "last_contact_sec": state[4] if len(state) > 4 and state[4] else 0,
         }
 
     @staticmethod
@@ -192,13 +196,13 @@ class OpenSkyOAuth2Client:
 
     @staticmethod
     def _generate_mock_flight(callsign: str) -> Dict[str, Any]:
-        """Синтетические данные для обучения (когда API недоступен)"""
+        """Синтетические данные для обучения"""
         import random
         is_airborne = random.choice([True, False])
         return {
             "callsign": callsign.upper().strip(),
             "icao24": f"{''.join(random.choices('0123456789ABCDEF', k=6))}",
-            "origin_country": random.choice(["Россия", "Германия", "Турция", "ОАЭ", "Китай"]),
+            "origin_country": random.choice(["Россия", "Германия", "Турция", "ОАЭ"]),
             "on_ground": not is_airborne,
             "altitude_m": random.randint(8000, 12000) if is_airborne else 0,
             "velocity_kmh": random.randint(750, 900) if is_airborne else 0,
@@ -209,4 +213,4 @@ class OpenSkyOAuth2Client:
 
 
 # Глобальный экземпляр клиента
-opensky_client = OpenSkyOAuth2Client()
+opensky_client = OpenSkyClient()
